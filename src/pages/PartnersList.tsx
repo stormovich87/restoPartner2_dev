@@ -24,12 +24,8 @@ export default function PartnersList() {
   const accessiblePartnerIds = adminUser?.accessible_partner_ids || [];
 
   useEffect(() => {
-    if (role?.name !== 'founder') {
-      navigate('/');
-      return;
-    }
     loadPartners();
-  }, [role, navigate]);
+  }, [navigate]);
 
   const loadPartners = async () => {
     try {

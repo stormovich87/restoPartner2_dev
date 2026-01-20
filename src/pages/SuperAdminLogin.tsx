@@ -18,6 +18,7 @@ export default function SuperAdminLogin() {
     setLoading(true);
 
     try {
+      // First try admin_users
       const { data: adminUser, error: adminError } = await supabase
         .from('admin_users')
         .select('*, admin_permissions(*), admin_partner_access(partner_id)')
@@ -27,36 +28,71 @@ export default function SuperAdminLogin() {
 
       if (adminError) throw adminError;
 
-      if (!adminUser) {
-        setError('Неверный логин или пароль');
-        setLoading(false);
+      if (adminUser) {
+        if (!adminUser.active) {
+          setError('Пользователь заблокирован');
+          setLoading(false);
+          return;
+        }
+
+        const permissions = adminUser.admin_permissions?.[0] || null;
+        const accessiblePartnerIds = adminUser.admin_partner_access?.map((access: any) => access.partner_id) || [];
+
+        const adminUserWithPermissions = {
+          id: adminUser.id,
+          login: adminUser.login,
+          password_hash: adminUser.password_hash,
+          name: adminUser.name,
+          is_super_admin: adminUser.is_super_admin,
+          active: adminUser.active,
+          created_at: adminUser.created_at,
+          permissions,
+          accessible_partner_ids: accessiblePartnerIds,
+        };
+
+        const founderRole = { name: 'founder', display_name: 'Супер Администратор' };
+        authLogin(null, null, founderRole, adminUserWithPermissions);
+        navigate('/super-admin/partners');
         return;
       }
 
-      if (!adminUser.active) {
-        setError('Пользователь заблокирован');
-        setLoading(false);
+      // Try staff_members with super admin role
+      const { data: staffMember, error: staffError } = await supabase
+        .from('staff_members')
+        .select('*')
+        .eq('login', login)
+        .eq('password_hash', password)
+        .eq('is_super_admin', true)
+        .maybeSingle();
+
+      if (staffError) throw staffError;
+
+      if (staffMember) {
+        if (!staffMember.is_active) {
+          setError('Пользователь заблокирован');
+          setLoading(false);
+          return;
+        }
+
+        const adminUserWithPermissions = {
+          id: staffMember.id,
+          login: staffMember.login,
+          password_hash: staffMember.password_hash,
+          name: staffMember.first_name || staffMember.name,
+          is_super_admin: true,
+          active: staffMember.is_active,
+          created_at: staffMember.created_at,
+          permissions: null,
+          accessible_partner_ids: [],
+        };
+
+        const founderRole = { name: 'founder', display_name: 'Супер Администратор' };
+        authLogin(null, null, founderRole, adminUserWithPermissions);
+        navigate('/super-admin/partners');
         return;
       }
 
-      const permissions = adminUser.admin_permissions?.[0] || null;
-      const accessiblePartnerIds = adminUser.admin_partner_access?.map((access: any) => access.partner_id) || [];
-
-      const adminUserWithPermissions = {
-        id: adminUser.id,
-        login: adminUser.login,
-        password_hash: adminUser.password_hash,
-        name: adminUser.name,
-        is_super_admin: adminUser.is_super_admin,
-        active: adminUser.active,
-        created_at: adminUser.created_at,
-        permissions,
-        accessible_partner_ids: accessiblePartnerIds,
-      };
-
-      const founderRole = { name: 'founder', display_name: 'Супер Администратор' };
-      authLogin(null, null, founderRole, adminUserWithPermissions);
-      navigate('/super-admin/partners');
+      setError('Неверный логин или пароль');
     } catch (err) {
       console.error('Login error:', err);
       setError('Ошибка входа');
