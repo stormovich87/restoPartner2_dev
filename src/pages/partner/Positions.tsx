@@ -49,6 +49,7 @@ export default function Positions({ partnerId }: PositionsProps) {
         .from('positions')
         .select('*')
         .eq('partner_id', partnerId)
+        .or('is_super_admin.is.null,is_super_admin.eq.false')
         .order('created_at', { ascending: true });
 
       if (positionsData) {

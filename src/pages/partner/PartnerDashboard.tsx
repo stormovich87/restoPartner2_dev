@@ -61,7 +61,7 @@ const allMenuItems: MenuItem[] = [
 export default function PartnerDashboard() {
   const { partnerPrefix } = useParams();
   const navigate = useNavigate();
-  const { partner: authPartner, user, logout, role, login } = useAuth();
+  const { partner: authPartner, user, logout, role, login, adminUser } = useAuth();
   const { devViewPartnerPrefix, setDevViewPartnerPrefix } = useDevMode();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activePage, setActivePage] = useState('dashboard');
@@ -102,6 +102,7 @@ export default function PartnerDashboard() {
   const [showExternalCouriersModal, setShowExternalCouriersModal] = useState(false);
   const isFounder = role?.name === 'founder';
   const isDevMode = devViewPartnerPrefix === partnerPrefix;
+  const isSuperAdmin = adminUser?.is_super_admin || false;
 
   const isStaffUser = (u: typeof user): u is StaffUser => {
     return u !== null && 'is_staff' in u && u.is_staff === true;
@@ -112,7 +113,7 @@ export default function PartnerDashboard() {
   const staffBranchIds = staffUser?.position?.position_branches?.map(pb => pb.branch_id) || [];
 
   const menuItems = useMemo(() => {
-    if (!staffUser) {
+    if (!staffUser || isSuperAdmin) {
       return allMenuItems;
     }
 
@@ -122,10 +123,10 @@ export default function PartnerDashboard() {
       }
       return true;
     });
-  }, [staffUser, staffPermissions]);
+  }, [staffUser, staffPermissions, isSuperAdmin]);
 
   const hasPermission = (section: string): boolean => {
-    if (!staffUser) return true;
+    if (!staffUser || isSuperAdmin) return true;
     return staffPermissions.includes(section);
   };
 
@@ -194,9 +195,9 @@ export default function PartnerDashboard() {
       { id: 'poster', label: 'Poster', icon: Package, section: 'poster_settings' }
     ];
 
-    if (!staffUser) return tabs;
+    if (!staffUser || isSuperAdmin) return tabs;
     return tabs.filter(tab => hasPermission(tab.section));
-  }, [staffUser, staffPermissions]);
+  }, [staffUser, staffPermissions, isSuperAdmin]);
 
   const menuTabs = useMemo(() => {
     const tabs = [
@@ -204,9 +205,9 @@ export default function PartnerDashboard() {
       { id: 'products', label: 'Товары', icon: Package, section: 'menu_products' }
     ];
 
-    if (!staffUser) return tabs;
+    if (!staffUser || isSuperAdmin) return tabs;
     return tabs.filter(tab => hasPermission(tab.section));
-  }, [staffUser, staffPermissions]);
+  }, [staffUser, staffPermissions, isSuperAdmin]);
 
   const accessTabs = useMemo(() => {
     const tabs = [
@@ -214,9 +215,9 @@ export default function PartnerDashboard() {
       { id: 'staff', label: 'Работники', icon: UserCheck, section: 'staff' }
     ];
 
-    if (!staffUser) return tabs;
+    if (!staffUser || isSuperAdmin) return tabs;
     return tabs.filter(tab => hasPermission(tab.section));
-  }, [staffUser, staffPermissions]);
+  }, [staffUser, staffPermissions, isSuperAdmin]);
 
   useEffect(() => {
     verifyPartnerAccess();
@@ -724,13 +725,13 @@ export default function PartnerDashboard() {
         return;
       }
 
-      if (!isDevMode) {
+      if (!isDevMode && !isFounder && !isSuperAdmin) {
         if (!authPartner) {
           navigate(`/${partnerPrefix}/login`, { replace: true });
           return;
         }
 
-        if (role?.name !== 'founder' && authPartner.id !== data.id) {
+        if (authPartner.id !== data.id) {
           navigate(`/${partnerPrefix}/login`, { replace: true });
           return;
         }

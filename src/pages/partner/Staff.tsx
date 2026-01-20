@@ -40,6 +40,7 @@ export default function Staff({ partnerId }: StaffProps) {
         .from('staff_members')
         .select('*, positions(name)')
         .eq('partner_id', partnerId)
+        .or('is_hidden.is.null,is_hidden.eq.false')
         .order('created_at', { ascending: false });
 
       if (data) {
