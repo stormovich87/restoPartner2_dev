@@ -1,0 +1,1961 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+};
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+const transliterationMap: { [key: string]: string } = {
+  'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd',
+  'е': 'e', 'ё': 'e', 'ж': 'zh', 'з': 'z', 'и': 'i',
+  'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n',
+  'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't',
+  'у': 'u', 'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch',
+  'ш': 'sh', 'щ': 'shch', 'ъ': '', 'ы': 'y', 'ь': '',
+  'э': 'e', 'ю': 'yu', 'я': 'ya',
+  'є': 'ye', 'і': 'i', 'ї': 'yi', 'ґ': 'g',
+  'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D',
+  'Е': 'E', 'Ё': 'E', 'Ж': 'Zh', 'З': 'Z', 'И': 'I',
+  'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M', 'Н': 'N',
+  'О': 'O', 'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T',
+  'У': 'U', 'Ф': 'F', 'Х': 'H', 'Ц': 'Ts', 'Ч': 'Ch',
+  'Ш': 'Sh', 'Щ': 'Shch', 'Ъ': '', 'Ы': 'Y', 'Ь': '',
+  'Э': 'E', 'Ю': 'Yu', 'Я': 'Ya',
+  'Є': 'Ye', 'І': 'I', 'Ї': 'Yi', 'Ґ': 'G',
+};
+
+function transliterate(text: string): string {
+  return text
+    .split('')
+    .map(char => transliterationMap[char] || char)
+    .join('');
+}
+
+function generateCabinetSlug(firstname: string, lastname: string): string {
+  const transliteratedFirst = transliterate(firstname.trim());
+  const transliteratedLast = transliterate(lastname.trim());
+
+  return `${transliteratedFirst}-${transliteratedLast}`
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function generateCabinetUrl(partnerDomain: string, cabinetSlug: string): string {
+  return `https://restopresto.org/courier/${cabinetSlug}`;
+}
+
+interface TelegramUpdate {
+  update_id: number;
+  message?: {
+    message_id: number;
+    from: {
+      id: number;
+      is_bot: boolean;
+      first_name: string;
+      last_name?: string;
+      username?: string;
+      language_code?: string;
+    };
+    chat: {
+      id: number;
+      type: string;
+    };
+    text?: string;
+    contact?: {
+      phone_number: string;
+      first_name: string;
+      last_name?: string;
+      user_id?: number;
+    };
+    location?: {
+      latitude: number;
+      longitude: number;
+    };
+  };
+  callback_query?: {
+    id: string;
+    from: {
+      id: number;
+      username?: string;
+      first_name: string;
+      last_name?: string;
+    };
+    message?: {
+      message_id: number;
+      chat: {
+        id: number;
+      };
+    };
+    data?: string;
+  };
+}
+
+interface UserState {
+  step: 'awaiting_fullname' | 'awaiting_phone' | 'awaiting_login' | 'awaiting_password' | 'awaiting_vehicle';
+  fullname?: string;
+  phone?: string;
+  cabinet_login?: string;
+  cabinet_password?: string;
+  partner_id?: string;
+  is_editing?: boolean;
+  courier_id?: string;
+}
+
+async function getUserState(telegramUserId: number): Promise<UserState | null> {
+  try {
+    const { data, error } = await supabase
+      .from('external_courier_registration_states')
+      .select('*')
+      .eq('telegram_user_id', telegramUserId.toString())
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error getting user state:', error);
+      return null;
+    }
+
+    if (!data) return null;
+
+    return {
+      step: data.step as any,
+      fullname: data.name,
+      phone: data.phone,
+      cabinet_login: data.cabinet_login || undefined,
+      cabinet_password: data.cabinet_password || undefined,
+      partner_id: data.partner_id,
+      is_editing: data.is_editing || false,
+      courier_id: data.courier_id || undefined,
+    };
+  } catch (err) {
+    console.error('Exception getting user state:', err);
+    return null;
+  }
+}
+
+async function setUserState(telegramUserId: number, state: UserState): Promise<boolean> {
+  try {
+    const { error } = await supabase
+      .from('external_courier_registration_states')
+      .upsert({
+        telegram_user_id: telegramUserId.toString(),
+        partner_id: state.partner_id,
+        step: state.step,
+        name: state.fullname || null,
+        phone: state.phone || null,
+        cabinet_login: state.cabinet_login || null,
+        cabinet_password: state.cabinet_password || null,
+        is_editing: state.is_editing || false,
+        courier_id: state.courier_id || null,
+      }, {
+        onConflict: 'telegram_user_id'
+      });
+
+    if (error) {
+      console.error('Error setting user state:', error);
+      return false;
+    }
+
+    console.log('User state saved successfully for user:', telegramUserId, 'step:', state.step);
+    return true;
+  } catch (err) {
+    console.error('Exception setting user state:', err);
+    return false;
+  }
+}
+
+async function deleteUserState(telegramUserId: number): Promise<void> {
+  try {
+    await supabase
+      .from('external_courier_registration_states')
+      .delete()
+      .eq('telegram_user_id', telegramUserId.toString());
+  } catch (err) {
+    console.error('Exception deleting user state:', err);
+  }
+}
+
+async function sendTelegramMessage(botToken: string, chatId: number, text: string, replyMarkup?: any): Promise<{ success: boolean; messageId?: number }> {
+  const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+  const body: any = {
+    chat_id: chatId,
+    text: text,
+    parse_mode: 'HTML',
+  };
+
+  if (replyMarkup) {
+    body.reply_markup = replyMarkup;
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      const errorData = JSON.parse(errorText);
+
+      if (errorData.error_code === 403) {
+        console.log('User blocked the bot or chat unavailable (403):', chatId);
+        return { success: false };
+      }
+
+      console.error('Failed to send message:', errorText);
+      return { success: false };
+    } else {
+      console.log('Message sent successfully to chat:', chatId);
+      const result = await response.json();
+      return { success: true, messageId: result.result?.message_id };
+    }
+  } catch (err) {
+    console.error('Exception sending message:', err);
+    return { success: false };
+  }
+}
+
+async function editTelegramMessage(botToken: string, chatId: number, messageId: number, text: string, replyMarkup?: any) {
+  const url = `https://api.telegram.org/bot${botToken}/editMessageText`;
+  try {
+    const body: any = {
+      chat_id: chatId,
+      message_id: messageId,
+      text: text,
+      parse_mode: 'HTML',
+    };
+
+    if (replyMarkup) {
+      body.reply_markup = replyMarkup;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      console.error('Failed to edit message:', await response.text());
+    }
+  } catch (err) {
+    console.error('Exception editing message:', err);
+  }
+}
+
+async function answerCallbackQuery(botToken: string, callbackQueryId: string, text?: string) {
+  const url = `https://api.telegram.org/bot${botToken}/answerCallbackQuery`;
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        callback_query_id: callbackQueryId,
+        text: text,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('Failed to answer callback query:', await response.text());
+    }
+  } catch (err) {
+    console.error('Exception answering callback query:', err);
+  }
+}
+
+async function deleteMessage(botToken: string, chatId: number, messageId: number): Promise<boolean> {
+  const url = `https://api.telegram.org/bot${botToken}/deleteMessage`;
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('Failed to delete message:', await response.text());
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('Exception deleting message:', err);
+    return false;
+  }
+}
+
+function getVehicleTypeName(type: string): string {
+  switch (type) {
+    case 'пеший': return 'Пеший';
+    case 'велосипед': return 'Велосипед';
+    case 'мотоцикл': return 'Мотоцикл';
+    case 'авто': return 'Авто';
+    default: return type;
+  }
+}
+
+function parseFullName(fullname: string): { name: string; lastname: string } {
+  const parts = fullname.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return {
+      name: parts[0],
+      lastname: parts.slice(1).join(' '),
+    };
+  }
+  return {
+    name: parts[0] || fullname,
+    lastname: '',
+  };
+}
+
+async function getBotUsername(botToken: string): Promise<string> {
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
+    if (response.ok) {
+      const data = await response.json();
+      return data.result.username;
+    }
+  } catch (err) {
+    console.error('Error getting bot username:', err);
+  }
+  return 'bot';
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, {
+      status: 200,
+      headers: corsHeaders,
+    });
+  }
+
+  try {
+    const update: TelegramUpdate = await req.json();
+
+    const updateType = update.message ? 'message' : update.callback_query ? 'callback_query' : 'unknown';
+    const chatType = update.message?.chat?.type || update.callback_query?.message?.chat?.type || 'unknown';
+    const contentData = update.message?.text || update.callback_query?.data || 'no content';
+
+    console.log('Received Telegram update:', {
+      update_type: updateType,
+      chat_type: chatType,
+      content: contentData,
+      update_id: update.update_id
+    });
+
+    const url = new URL(req.url);
+    const botToken = url.searchParams.get('token');
+
+    if (!botToken) {
+      console.error('Bot token not provided in URL');
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const { data: partner, error: partnerError } = await supabase
+      .from('partner_settings')
+      .select('partner_id, external_courier_final_button_enabled, external_courier_final_button_text, external_courier_final_button_url')
+      .eq('external_courier_bot_token', botToken)
+      .maybeSingle();
+
+    if (partnerError || !partner) {
+      console.error('Partner not found for bot token:', partnerError);
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const partnerId = partner.partner_id;
+    console.log('Partner ID:', partnerId);
+
+    if (update.callback_query) {
+      const callbackQuery = update.callback_query;
+      const userId = callbackQuery.from.id;
+      const replyChatId = userId;
+      const data = callbackQuery.data;
+      const username = callbackQuery.from.username || null;
+
+      console.log('Callback query from user:', userId, 'data:', data, 'reply_to:', replyChatId);
+
+      await answerCallbackQuery(botToken, callbackQuery.id);
+
+      if (data?.startsWith('poll_agree_') || data?.startsWith('poll_decline_')) {
+        const isAgree = data.startsWith('poll_agree_');
+        const courierId = data.replace('poll_agree_', '').replace('poll_decline_', '');
+
+        if (callbackQuery.message) {
+          await deleteMessage(botToken, callbackQuery.message.chat.id, callbackQuery.message.message_id);
+        }
+
+        const today = new Date().toISOString().split('T')[0];
+
+        if (!isAgree) {
+          const { data: latestPoll } = await supabase
+            .from('external_courier_polling_responses')
+            .select('id')
+            .eq('partner_id', partnerId)
+            .eq('courier_id', courierId)
+            .eq('response_date', today)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (latestPoll) {
+            await supabase
+              .from('external_courier_polling_responses')
+              .update({
+                is_active: false,
+                responded_at: new Date().toISOString(),
+              })
+              .eq('id', latestPoll.id);
+          }
+
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const { data: pollingSettings } = await supabase
+          .from('partner_settings')
+          .select(`
+            external_courier_polling_success_message,
+            external_courier_polling_join_button,
+            external_courier_final_button_url,
+            external_courier_polling_followup_questions
+          `)
+          .eq('partner_id', partnerId)
+          .maybeSingle();
+
+        const { data: latestPoll } = await supabase
+          .from('external_courier_polling_responses')
+          .select('id')
+          .eq('partner_id', partnerId)
+          .eq('courier_id', courierId)
+          .eq('response_date', today)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (latestPoll) {
+          await supabase
+            .from('external_courier_polling_responses')
+            .update({
+              is_active: true,
+              responded_at: new Date().toISOString(),
+            })
+            .eq('id', latestPoll.id);
+        }
+
+        const followupQuestions = pollingSettings?.external_courier_polling_followup_questions || [];
+
+        if (followupQuestions.length > 0) {
+          const firstQuestion = followupQuestions[0];
+          const keyboard = firstQuestion.options.map((option: string, index: number) => [{
+            text: option,
+            callback_data: `followup_answer_${courierId}_0_${index}`
+          }]);
+
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            firstQuestion.question,
+            { inline_keyboard: keyboard }
+          );
+        } else {
+          const successMessage = pollingSettings?.external_courier_polling_success_message || 'Отлично! Вы добавлены в список активных курьеров на сегодня.';
+          const joinButtonText = pollingSettings?.external_courier_polling_join_button || 'Перейти в группу заказов';
+          const joinUrl = pollingSettings?.external_courier_final_button_url;
+
+          let pollingReplyMarkup;
+          if (joinUrl) {
+            pollingReplyMarkup = {
+              inline_keyboard: [[
+                { text: joinButtonText, url: joinUrl }
+              ]]
+            };
+          }
+
+          const result = await sendTelegramMessage(botToken, replyChatId, successMessage, pollingReplyMarkup);
+
+          if (result.success && result.messageId && latestPoll) {
+            await supabase
+              .from('external_courier_polling_responses')
+              .update({ success_message_id: result.messageId })
+              .eq('id', latestPoll.id);
+          }
+        }
+
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (data?.startsWith('followup_answer_')) {
+        const parts = data.replace('followup_answer_', '').split('_');
+        if (parts.length >= 3) {
+          const courierId = parts[0];
+          const questionIndex = parseInt(parts[1]);
+          const optionIndex = parseInt(parts[2]);
+
+          if (callbackQuery.message) {
+            await deleteMessage(botToken, callbackQuery.message.chat.id, callbackQuery.message.message_id);
+          }
+
+          const today = new Date().toISOString().split('T')[0];
+
+          const { data: pollingSettings } = await supabase
+            .from('partner_settings')
+            .select(`
+              external_courier_polling_success_message,
+              external_courier_polling_join_button,
+              external_courier_final_button_url,
+              external_courier_polling_followup_questions
+            `)
+            .eq('partner_id', partnerId)
+            .maybeSingle();
+
+          const followupQuestions = pollingSettings?.external_courier_polling_followup_questions || [];
+          const currentQuestion = followupQuestions[questionIndex];
+          const answer = currentQuestion?.options[optionIndex] || '';
+
+          const { data: response } = await supabase
+            .from('external_courier_polling_responses')
+            .select('id, followup_answers')
+            .eq('partner_id', partnerId)
+            .eq('courier_id', courierId)
+            .eq('response_date', today)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (response) {
+            const currentAnswers = response.followup_answers || {};
+            currentAnswers[questionIndex.toString()] = answer;
+
+            await supabase
+              .from('external_courier_polling_responses')
+              .update({ followup_answers: currentAnswers })
+              .eq('id', response.id);
+          }
+
+          const nextQuestionIndex = questionIndex + 1;
+
+          if (nextQuestionIndex < followupQuestions.length) {
+            const nextQuestion = followupQuestions[nextQuestionIndex];
+            const keyboard = nextQuestion.options.map((option: string, index: number) => [{
+              text: option,
+              callback_data: `followup_answer_${courierId}_${nextQuestionIndex}_${index}`
+            }]);
+
+            await sendTelegramMessage(
+              botToken,
+              replyChatId,
+              nextQuestion.question,
+              { inline_keyboard: keyboard }
+            );
+          } else {
+            const successMessage = pollingSettings?.external_courier_polling_success_message || 'Отлично! Вы добавлены в список активных курьеров на сегодня.';
+            const joinButtonText = pollingSettings?.external_courier_polling_join_button || 'Перейти в группу заказов';
+            const joinUrl = pollingSettings?.external_courier_final_button_url;
+
+            let pollingReplyMarkup;
+            if (joinUrl) {
+              pollingReplyMarkup = {
+                inline_keyboard: [[
+                  { text: joinButtonText, url: joinUrl }
+                ]]
+              };
+            }
+
+            const result = await sendTelegramMessage(botToken, replyChatId, successMessage, pollingReplyMarkup);
+
+            if (result.success && result.messageId && response) {
+              await supabase
+                .from('external_courier_polling_responses')
+                .update({ success_message_id: result.messageId })
+                .eq('id', response.id);
+            }
+          }
+        }
+
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (data === 'cancel_message') {
+        if (callbackQuery.message) {
+          await deleteMessage(botToken, callbackQuery.message.chat.id, callbackQuery.message.message_id);
+        }
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (data?.startsWith('external_eta_') && !data.startsWith('external_eta_auto_') && !data.startsWith('external_eta_other_')) {
+        const parts = data.replace('external_eta_', '').split('_');
+        if (parts.length >= 3) {
+          const orderId = parts[0];
+          const courierId = parts[1];
+          const minutes = parseInt(parts[2]);
+
+          console.log('ETA selection:', { orderId, courierId, minutes });
+
+          const etaPickupAt = new Date(Date.now() + minutes * 60 * 1000).toISOString();
+
+          const { error: updateError } = await supabase
+            .from('orders')
+            .update({
+              eta_pickup_minutes: minutes,
+              eta_pickup_at: etaPickupAt,
+              eta_source: 'manual_button'
+            })
+            .eq('id', orderId);
+
+          if (updateError) {
+            console.error('Error updating order ETA:', updateError);
+          }
+
+          if (callbackQuery.message) {
+            await editTelegramMessage(
+              botToken,
+              callbackQuery.message.chat.id,
+              callbackQuery.message.message_id,
+              `✅ Принято. Заберу через ${minutes} мин.`
+            );
+          }
+
+          await supabase
+            .from('external_courier_states')
+            .delete()
+            .eq('telegram_user_id', userId.toString());
+
+          await answerCallbackQuery(botToken, callbackQuery.id, `Время доставки: ${minutes} мин`);
+        }
+
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (data?.startsWith('external_eta_auto_')) {
+        const parts = data.replace('external_eta_auto_', '').split('_');
+        if (parts.length >= 2) {
+          const orderId = parts[0];
+          const courierId = parts[1];
+
+          console.log('ETA auto calculation requested:', { orderId, courierId });
+
+          if (callbackQuery.message) {
+            await deleteMessage(botToken, callbackQuery.message.chat.id, callbackQuery.message.message_id);
+          }
+
+          await supabase
+            .from('external_courier_states')
+            .update({
+              step: 'awaiting_location_for_eta',
+              updated_at: new Date().toISOString()
+            })
+            .eq('telegram_user_id', userId.toString());
+
+          const locationKeyboard = {
+            keyboard: [[
+              { text: '📍 Отправить геолокацию', request_location: true }
+            ], [
+              { text: 'Отмена' }
+            ]],
+            resize_keyboard: true,
+            one_time_keyboard: true
+          };
+
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            '📍 Отправьте вашу геолокацию, чтобы я рассчитал время до филиала.',
+            locationKeyboard
+          );
+
+          await answerCallbackQuery(botToken, callbackQuery.id, 'Отправьте геолокацию');
+        }
+
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (data?.startsWith('external_eta_other_')) {
+        const parts = data.replace('external_eta_other_', '').split('_');
+        if (parts.length >= 2) {
+          const orderId = parts[0];
+          const courierId = parts[1];
+
+          console.log('ETA manual input requested:', { orderId, courierId });
+
+          if (callbackQuery.message) {
+            await deleteMessage(botToken, callbackQuery.message.chat.id, callbackQuery.message.message_id);
+          }
+
+          await supabase
+            .from('external_courier_states')
+            .update({
+              step: 'awaiting_eta_manual_text',
+              updated_at: new Date().toISOString()
+            })
+            .eq('telegram_user_id', userId.toString());
+
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Введите число минут (например 25):'
+          );
+
+          await answerCallbackQuery(botToken, callbackQuery.id);
+        }
+
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (data === 'password_yes') {
+        const { data: courier } = await supabase
+          .from('couriers')
+          .select('cabinet_login, cabinet_password')
+          .eq('partner_id', partnerId)
+          .eq('telegram_user_id', userId.toString())
+          .eq('is_external', true)
+          .maybeSingle();
+
+        if (callbackQuery.message) {
+          await deleteMessage(botToken, callbackQuery.message.chat.id, callbackQuery.message.message_id);
+        }
+
+        if (!courier || !courier.cabinet_login || !courier.cabinet_password) {
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Логин и пароль не найдены. Возможно, они не были установлены при регистрации.'
+          );
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: replyChatId,
+            text: `<b>Ваши данные для входа:</b>\n\n<b>Логин:</b> <code>${courier.cabinet_login}</code>\n<b>Пароль:</b> <code>${courier.cabinet_password}</code>\n\n<i>Это сообщение будет удалено через 1 минуту</i>`,
+            parse_mode: 'HTML',
+          }),
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          const messageId = result.result.message_id;
+
+          setTimeout(async () => {
+            await deleteMessage(botToken, callbackQuery.message!.chat.id, messageId);
+          }, 60000);
+        }
+
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (data === 'password_no') {
+        if (callbackQuery.message) {
+          await deleteMessage(botToken, callbackQuery.message.chat.id, callbackQuery.message.message_id);
+        }
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (data === 'start_edit_registration') {
+        const { data: existingCourier } = await supabase
+          .from('couriers')
+          .select('id, name, lastname, is_external')
+          .eq('partner_id', partnerId)
+          .eq('telegram_user_id', userId.toString())
+          .maybeSingle();
+
+        if (!existingCourier || !existingCourier.is_external) {
+          if (callbackQuery.message) {
+            await editTelegramMessage(
+              botToken,
+              callbackQuery.message.chat.id,
+              callbackQuery.message.message_id,
+              'Вы не зарегистрированы как сторонний курьер.'
+            );
+          }
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (callbackQuery.message) {
+          await deleteMessage(botToken, callbackQuery.message.chat.id, callbackQuery.message.message_id);
+        }
+
+        await deleteUserState(userId);
+
+        const saved = await setUserState(userId, {
+          step: 'awaiting_fullname',
+          partner_id: partnerId,
+          is_editing: true,
+          courier_id: existingCourier.id,
+        });
+
+        if (!saved) {
+          console.error('Failed to save initial state');
+        }
+
+        await sendTelegramMessage(
+          botToken,
+          replyChatId,
+          'Редактирование регистрации\n\nВведите ваше <b>ФИО</b> (Фамилия Имя Отчество):'
+        );
+
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (data === 'cancel_external_registration') {
+        if (callbackQuery.message) {
+          await deleteMessage(botToken, callbackQuery.message.chat.id, callbackQuery.message.message_id);
+        }
+        await deleteUserState(userId);
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (data === 'continue_external_registration') {
+        if (callbackQuery.message) {
+          await deleteMessage(botToken, callbackQuery.message.chat.id, callbackQuery.message.message_id);
+        }
+
+        await setUserState(userId, {
+          step: 'awaiting_fullname',
+          partner_id: partnerId
+        });
+
+        await sendTelegramMessage(
+          botToken,
+          replyChatId,
+          'Для регистрации как сторонний курьер, введите ваше <b>ФИО</b> (Фамилия Имя Отчество):'
+        );
+
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (data?.startsWith('vehicle_')) {
+        const vehicleType = data.replace('vehicle_', '');
+        const state = await getUserState(userId);
+
+        console.log('User state for vehicle selection:', state);
+
+        if (state && state.step === 'awaiting_vehicle') {
+          const { name, lastname } = parseFullName(state.fullname || '');
+          const cabinetSlug = generateCabinetSlug(name, lastname);
+
+          let courierError;
+
+          if (state.is_editing && state.courier_id) {
+            console.log('Updating courier with data:', {
+              courier_id: state.courier_id,
+              name,
+              lastname,
+              phone: state.phone || '',
+              vehicle_type: vehicleType,
+            });
+
+            const { error } = await supabase
+              .from('couriers')
+              .update({
+                name: name,
+                lastname: lastname || '',
+                phone: state.phone || '',
+                vehicle_type: vehicleType,
+                telegram_username: username,
+                cabinet_slug: cabinetSlug,
+                cabinet_login: state.cabinet_login || null,
+                cabinet_password: state.cabinet_password || null,
+              })
+              .eq('id', state.courier_id);
+
+            courierError = error;
+          } else {
+            const { data: existingOwnCourier } = await supabase
+              .from('couriers')
+              .select('id, is_own, is_external')
+              .eq('partner_id', partnerId)
+              .eq('telegram_user_id', userId.toString())
+              .maybeSingle();
+
+            if (existingOwnCourier && existingOwnCourier.is_own && !existingOwnCourier.is_external) {
+              console.log('Courier exists as own, deleting before creating as external:', existingOwnCourier.id);
+              const { error: deleteError } = await supabase
+                .from('couriers')
+                .delete()
+                .eq('id', existingOwnCourier.id);
+
+              if (deleteError) {
+                console.error('Error deleting own courier:', deleteError);
+              } else {
+                console.log('Own courier deleted successfully');
+              }
+            }
+
+            console.log('Creating courier with data:', {
+              partner_id: partnerId,
+              name,
+              lastname,
+              phone: state.phone || '',
+              telegram_user_id: userId.toString(),
+              telegram_username: username,
+              vehicle_type: vehicleType,
+            });
+
+            const { data: newCourier, error } = await supabase
+              .from('couriers')
+              .insert({
+                partner_id: partnerId,
+                name: name,
+                lastname: lastname || '',
+                phone: state.phone || '',
+                telegram_user_id: userId.toString(),
+                telegram_username: username,
+                vehicle_type: vehicleType,
+                is_active: true,
+                is_external: true,
+                is_own: false,
+                branch_id: null,
+                cabinet_slug: cabinetSlug,
+                cabinet_login: state.cabinet_login || null,
+                cabinet_password: state.cabinet_password || null,
+              })
+              .select('id')
+              .single();
+
+            courierError = error;
+
+            if (!error && newCourier) {
+              const { data: regState } = await supabase
+                .from('external_courier_registration_states')
+                .select('invite_code')
+                .eq('telegram_user_id', userId.toString())
+                .maybeSingle();
+
+              if (regState?.invite_code) {
+                await supabase
+                  .from('external_courier_invites')
+                  .update({
+                    registered_at: new Date().toISOString(),
+                    courier_id: newCourier.id,
+                    status: 'registered',
+                  })
+                  .eq('invite_code', regState.invite_code)
+                  .eq('partner_id', partnerId);
+
+                console.log('Invite updated with registered status');
+              }
+            }
+          }
+
+          if (courierError) {
+            console.error('Error with courier:', courierError);
+
+            if (courierError.code === '23505') {
+              await editTelegramMessage(
+                botToken,
+                replyChatId,
+                callbackQuery.message!.message_id,
+                'Вы уже зарегистрированы в системе. Обратитесь к администратору.'
+              );
+            } else {
+              await editTelegramMessage(
+                botToken,
+                replyChatId,
+                callbackQuery.message!.message_id,
+                'Ошибка при регистрации. Попробуйте позже или обратитесь к администратору.'
+              );
+            }
+          } else {
+            console.log(state.is_editing ? 'Courier updated successfully' : 'Courier created successfully');
+
+            const successMessage = state.is_editing
+              ? `Данные обновлены!\n\n<b>ФИО:</b> ${state.fullname}\n<b>Телефон:</b> ${state.phone}\n<b>Транспорт:</b> ${getVehicleTypeName(vehicleType)}`
+              : `Регистрация завершена!\n\n<b>ФИО:</b> ${state.fullname}\n<b>Телефон:</b> ${state.phone}\n<b>Транспорт:</b> ${getVehicleTypeName(vehicleType)}\n\nТеперь вы можете принимать заказы.`;
+
+            let replyMarkup;
+            if (!state.is_editing && partner.external_courier_final_button_enabled && partner.external_courier_final_button_text && partner.external_courier_final_button_url) {
+              replyMarkup = {
+                inline_keyboard: [[
+                  {
+                    text: partner.external_courier_final_button_text,
+                    url: partner.external_courier_final_button_url
+                  }
+                ]]
+              };
+            }
+
+            await editTelegramMessage(
+              botToken,
+              replyChatId,
+              callbackQuery.message!.message_id,
+              successMessage,
+              replyMarkup
+            );
+          }
+
+          await deleteUserState(userId);
+        } else {
+          console.log('Invalid state for vehicle selection, state:', state);
+        }
+      }
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (update.message) {
+      const message = update.message;
+      const userId = message.from.id;
+      const chatId = message.chat.id;
+      const isPrivateChat = message.chat.type === 'private';
+      const replyChatId = isPrivateChat ? chatId : userId;
+      let text = message.text?.trim() || '';
+      const username = message.from.username || null;
+
+      text = text.replace(/@\w+/g, '').trim();
+
+      console.log('Message from user:', userId, 'text:', text, 'username:', username, 'chat_type:', message.chat.type, 'reply_to:', replyChatId);
+
+      if (isPrivateChat || true) {
+        const { data: etaState } = await supabase
+          .from('external_courier_states')
+          .select('*')
+          .eq('telegram_user_id', userId.toString())
+          .maybeSingle();
+
+        if ((etaState?.step === 'awaiting_eta_manual_text' || etaState?.step === 'awaiting_custom_eta') && text && !text.startsWith('/')) {
+          const minutes = parseInt(text);
+
+          if (isNaN(minutes) || minutes <= 0 || minutes > 300) {
+            await sendTelegramMessage(
+              botToken,
+              replyChatId,
+              'Пожалуйста, введите корректное число минут (от 1 до 300):'
+            );
+            return new Response(JSON.stringify({ ok: true }), {
+              status: 200,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          const etaPickupAt = new Date(Date.now() + minutes * 60 * 1000).toISOString();
+
+          await supabase
+            .from('orders')
+            .update({
+              eta_pickup_minutes: minutes,
+              eta_pickup_at: etaPickupAt,
+              eta_source: 'manual_text'
+            })
+            .eq('id', etaState.order_id);
+
+          await supabase
+            .from('external_courier_states')
+            .delete()
+            .eq('telegram_user_id', userId.toString());
+
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            `✅ Принято. Заберу через ${minutes} мин.`,
+            { remove_keyboard: true }
+          );
+
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (etaState?.step === 'awaiting_location_for_eta' && message.location) {
+          const courierLat = message.location.latitude;
+          const courierLng = message.location.longitude;
+
+          console.log('Received courier location:', { courierLat, courierLng });
+
+          const { data: order } = await supabase
+            .from('orders')
+            .select(`
+              id,
+              branch_id,
+              branch:branches(latitude, longitude, name)
+            `)
+            .eq('id', etaState.order_id)
+            .maybeSingle();
+
+          if (!order?.branch?.latitude || !order?.branch?.longitude) {
+            await sendTelegramMessage(
+              botToken,
+              replyChatId,
+              'Не удалось получить координаты филиала. Введите время вручную (число минут):',
+              { remove_keyboard: true }
+            );
+
+            await supabase
+              .from('external_courier_states')
+              .update({ step: 'awaiting_eta_manual_text' })
+              .eq('telegram_user_id', userId.toString());
+
+            return new Response(JSON.stringify({ ok: true }), {
+              status: 200,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          const { data: partnerSettings } = await supabase
+            .from('partner_settings')
+            .select('google_maps_api_key')
+            .eq('partner_id', etaState.partner_id)
+            .maybeSingle();
+
+          let etaMinutes = 15;
+          let distanceKm = 0;
+
+          if (partnerSettings?.google_maps_api_key) {
+            try {
+              const origin = `${courierLat},${courierLng}`;
+              const destination = `${order.branch.latitude},${order.branch.longitude}`;
+              const distanceUrl = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin}&destinations=${destination}&mode=driving&language=ru&key=${partnerSettings.google_maps_api_key}`;
+
+              const distanceResponse = await fetch(distanceUrl);
+              const distanceData = await distanceResponse.json();
+
+              if (distanceData.status === 'OK' && distanceData.rows[0]?.elements[0]?.status === 'OK') {
+                const element = distanceData.rows[0].elements[0];
+                etaMinutes = Math.round(element.duration.value / 60);
+                distanceKm = element.distance.value / 1000;
+              }
+            } catch (err) {
+              console.error('Error calculating distance:', err);
+            }
+          } else {
+            const R = 6371;
+            const dLat = (order.branch.latitude - courierLat) * Math.PI / 180;
+            const dLng = (order.branch.longitude - courierLng) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(courierLat * Math.PI / 180) * Math.cos(order.branch.latitude * Math.PI / 180) *
+                      Math.sin(dLng/2) * Math.sin(dLng/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            distanceKm = R * c;
+            etaMinutes = Math.round(distanceKm * 3);
+          }
+
+          const etaPickupAt = new Date(Date.now() + etaMinutes * 60 * 1000).toISOString();
+
+          await supabase
+            .from('orders')
+            .update({
+              eta_pickup_minutes: etaMinutes,
+              eta_pickup_at: etaPickupAt,
+              eta_source: 'auto_route',
+              courier_location_lat: courierLat,
+              courier_location_lng: courierLng
+            })
+            .eq('id', etaState.order_id);
+
+          const { data: orderExecutors } = await supabase
+            .from('order_executors')
+            .select('id')
+            .eq('order_id', etaState.order_id)
+            .eq('status', 'assigned');
+
+          if (orderExecutors && orderExecutors.length > 0) {
+            for (const oe of orderExecutors) {
+              await supabase
+                .from('order_executors')
+                .update({
+                  eta_pickup_minutes: etaMinutes,
+                  eta_pickup_at: etaPickupAt
+                })
+                .eq('id', oe.id);
+            }
+          }
+
+          await supabase
+            .from('external_courier_states')
+            .delete()
+            .eq('telegram_user_id', userId.toString());
+
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            `✅ Рассчитано: до филиала ~ ${etaMinutes} мин (${distanceKm.toFixed(1)} км).`,
+            { remove_keyboard: true }
+          );
+
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (etaState?.step === 'awaiting_location_for_eta' && text === 'Отмена') {
+          await supabase
+            .from('external_courier_states')
+            .delete()
+            .eq('telegram_user_id', userId.toString());
+
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Отменено.',
+            { remove_keyboard: true }
+          );
+
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
+      const { data: existingCourier } = await supabase
+        .from('couriers')
+        .select('id, name, lastname, is_external, is_own, cabinet_token, cabinet_slug')
+        .eq('partner_id', partnerId)
+        .eq('telegram_user_id', userId.toString())
+        .maybeSingle();
+
+      if (text === '/kabinet') {
+        if (!existingCourier || !existingCourier.is_external) {
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Вы не зарегистрированы как курьер. Для регистрации используйте команду /start'
+          );
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const { data: partnerInfo } = await supabase
+          .from('partners')
+          .select('url_suffix')
+          .eq('id', partnerId)
+          .maybeSingle();
+
+        if (!partnerInfo || !partnerInfo.url_suffix) {
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Личный кабинет временно недоступен. Обратитесь к администратору для настройки домена партнера.'
+          );
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        let cabinetSlug = existingCourier.cabinet_slug;
+        if (!cabinetSlug && existingCourier.name && existingCourier.lastname) {
+          cabinetSlug = generateCabinetSlug(existingCourier.name, existingCourier.lastname);
+
+          await supabase
+            .from('couriers')
+            .update({ cabinet_slug: cabinetSlug })
+            .eq('id', existingCourier.id);
+        }
+
+        if (!cabinetSlug) {
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Ошибка: не удалось сформировать ссылку на кабинет. Проверьте, что ваше имя и фамилия указаны корректно.'
+          );
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const fullCabinetUrl = generateCabinetUrl(partnerInfo.url_suffix, cabinetSlug);
+
+        await sendTelegramMessage(
+          botToken,
+          replyChatId,
+          `Ваш личный кабинет курьера\n\n<b>${existingCourier.name}${existingCourier.lastname ? ' ' + existingCourier.lastname : ''}</b>\n\nНажмите кнопку ниже, чтобы открыть кабинет:`,
+          {
+            inline_keyboard: [[
+              {
+                text: 'Открыть кабинет',
+                web_app: { url: fullCabinetUrl }
+              }
+            ]]
+          }
+        );
+
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (text === '/orders') {
+        if (!existingCourier || !existingCourier.is_external) {
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Вы не зарегистрированы как сторонний курьер. Для регистрации используйте команду /start'
+          );
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (partner.external_courier_final_button_enabled && partner.external_courier_final_button_url) {
+          const buttonText = partner.external_courier_final_button_text || 'Перейти в группу доставок';
+
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Группа с заказами\n\nЭто группа, куда приходят все заказы. Нажмите кнопку ниже, чтобы перейти в группу:',
+            {
+              inline_keyboard: [[
+                {
+                  text: buttonText,
+                  url: partner.external_courier_final_button_url
+                }
+              ]]
+            }
+          );
+        } else {
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Группа с заказами не настроена. Обратитесь к администратору.'
+          );
+        }
+
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (text === '/password') {
+        if (!existingCourier || !existingCourier.is_external) {
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Вы не зарегистрированы как сторонний курьер. Для регистрации используйте команду /start'
+          );
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        await sendTelegramMessage(
+          botToken,
+          replyChatId,
+          'Вы забыли пароль и логин от кабинета?\n\nОтправить ваш логин и пароль для доступа в личный кабинет?',
+          {
+            inline_keyboard: [
+              [
+                { text: 'Да', callback_data: 'password_yes' },
+                { text: 'Нет', callback_data: 'password_no' }
+              ]
+            ]
+          }
+        );
+
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (text === '/editregis') {
+        const isRegistered = existingCourier && existingCourier.is_external;
+
+        if (isRegistered) {
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            `Вы уже зарегистрированы как сторонний курьер.\n\n<b>ФИО:</b> ${existingCourier.name}${existingCourier.lastname ? ' ' + existingCourier.lastname : ''}\n\nВыберите действие:`,
+            {
+              inline_keyboard: [
+                [{ text: 'Редактировать данные', callback_data: 'start_edit_registration' }],
+                [{ text: 'Отмена', callback_data: 'cancel_message' }]
+              ]
+            }
+          );
+        } else {
+          console.log('Starting new registration for user:', userId);
+
+          await deleteUserState(userId);
+
+          const saved = await setUserState(userId, {
+            step: 'awaiting_fullname',
+            partner_id: partnerId,
+            is_editing: false,
+          });
+
+          if (!saved) {
+            console.error('Failed to save initial state');
+          }
+
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Регистрация как сторонний курьер\n\nВведите ваше <b>ФИО</b> (Фамилия Имя Отчество):'
+          );
+        }
+
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (text === '/start' || text.startsWith('/start ')) {
+        const startParam = text.replace('/start', '').trim();
+        const isPrivateChat = message.chat.type === 'private';
+        const isRegistered = existingCourier && existingCourier.is_external;
+
+        if (startParam.startsWith('i_') && isPrivateChat) {
+          const inviteCode = startParam.slice(2);
+          console.log('Processing invite code:', inviteCode);
+
+          const { data: invite, error: inviteError } = await supabase
+            .from('external_courier_invites')
+            .select('*')
+            .eq('invite_code', inviteCode)
+            .eq('partner_id', partnerId)
+            .maybeSingle();
+
+          if (inviteError) {
+            console.error('Error fetching invite:', inviteError);
+          }
+
+          if (invite && invite.status !== 'registered') {
+            await supabase
+              .from('external_courier_invites')
+              .update({
+                started_at: new Date().toISOString(),
+                telegram_user_id: userId.toString(),
+                telegram_username: username,
+                status: 'started',
+              })
+              .eq('id', invite.id);
+
+            console.log('Invite updated with started status');
+
+            await supabase
+              .from('external_courier_registration_states')
+              .upsert({
+                telegram_user_id: userId.toString(),
+                partner_id: partnerId,
+                step: 'awaiting_fullname',
+                name: invite.name || null,
+                invite_code: inviteCode,
+              }, {
+                onConflict: 'telegram_user_id'
+              });
+          }
+
+          if (isRegistered) {
+            await sendTelegramMessage(
+              botToken,
+              replyChatId,
+              `Вы уже зарегистрированы как сторонний курьер.\n\n<b>ФИО:</b> ${existingCourier.name}${existingCourier.lastname ? ' ' + existingCourier.lastname : ''}\n\nДоступные команды:\n/orders - группа с заказами\n/kabinet - личный кабинет\n/editregis - редактировать данные`
+            );
+
+            if (invite && invite.status !== 'registered') {
+              await supabase
+                .from('external_courier_invites')
+                .update({
+                  registered_at: new Date().toISOString(),
+                  courier_id: existingCourier.id,
+                  status: 'registered',
+                })
+                .eq('id', invite.id);
+            }
+
+            return new Response(JSON.stringify({ ok: true }), {
+              status: 200,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          const welcomeMessage = invite?.name
+            ? `Здравствуйте, ${invite.name}!\n\nДля регистрации как курьер, введите ваше <b>ФИО</b> (Фамилия Имя Отчество):`
+            : 'Добро пожаловать!\n\nДля регистрации как курьер, введите ваше <b>ФИО</b> (Фамилия Имя Отчество):';
+
+          await sendTelegramMessage(botToken, replyChatId, welcomeMessage);
+
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (startParam === 'kabinet' && isRegistered) {
+          const { data: partnerInfo } = await supabase
+            .from('partners')
+            .select('url_suffix')
+            .eq('id', partnerId)
+            .maybeSingle();
+
+          if (partnerInfo?.url_suffix) {
+            let cabinetSlug = existingCourier.cabinet_slug;
+            if (!cabinetSlug && existingCourier.name && existingCourier.lastname) {
+              cabinetSlug = generateCabinetSlug(existingCourier.name, existingCourier.lastname);
+              await supabase
+                .from('couriers')
+                .update({ cabinet_slug: cabinetSlug })
+                .eq('id', existingCourier.id);
+            }
+
+            if (cabinetSlug) {
+              const fullCabinetUrl = generateCabinetUrl(partnerInfo.url_suffix, cabinetSlug);
+              await sendTelegramMessage(
+                botToken,
+                replyChatId,
+                `Ваш личный кабинет курьера\n\n<b>${existingCourier.name}${existingCourier.lastname ? ' ' + existingCourier.lastname : ''}</b>\n\nНажмите кнопку ниже, чтобы открыть кабинет:`,
+                {
+                  inline_keyboard: [[
+                    {
+                      text: 'Открыть кабинет',
+                      web_app: { url: fullCabinetUrl }
+                    }
+                  ]]
+                }
+              );
+            } else {
+              await sendTelegramMessage(
+                botToken,
+                replyChatId,
+                'Ошибка: не удалось сформировать ссылку на кабинет. Проверьте, что ваше имя и фамилия указаны корректно.'
+              );
+            }
+          } else {
+            await sendTelegramMessage(
+              botToken,
+              replyChatId,
+              'Личный кабинет временно недоступен. Обратитесь к администратору для настройки URL приложения.'
+            );
+          }
+
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (startParam === 'editregis' && isRegistered) {
+          console.log('Starting edit registration for user:', userId);
+
+          await deleteUserState(userId);
+
+          const saved = await setUserState(userId, {
+            step: 'awaiting_fullname',
+            partner_id: partnerId,
+            is_editing: true,
+            courier_id: existingCourier.id,
+          });
+
+          if (!saved) {
+            console.error('Failed to save initial state');
+          }
+
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Редактирование регистрации\n\nВведите ваше <b>ФИО</b> (Фамилия Имя Отчество):'
+          );
+
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (startParam === 'register' && !isRegistered) {
+          console.log('Starting registration for user:', userId);
+
+          if (existingCourier && existingCourier.is_own && !existingCourier.is_external) {
+            console.log('User is already registered as company courier, showing warning');
+
+            await sendTelegramMessage(
+              botToken,
+              replyChatId,
+              `Вы уже зарегистрированы как курьер фирмы.\n\n` +
+              `<b>ФИО:</b> ${existingCourier.name}${existingCourier.lastname ? ' ' + existingCourier.lastname : ''}\n\n` +
+              `При регистрации как сторонний курьер вы будете <b>удалены из курьеров фирмы</b>.\n\n` +
+              `Продолжить регистрацию?`,
+              {
+                inline_keyboard: [
+                  [{ text: 'Продолжить', callback_data: 'continue_external_registration' }],
+                  [{ text: 'Отмена', callback_data: 'cancel_external_registration' }]
+                ]
+              }
+            );
+
+            return new Response(JSON.stringify({ ok: true }), {
+              status: 200,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          await deleteUserState(userId);
+
+          const saved = await setUserState(userId, {
+            step: 'awaiting_fullname',
+            partner_id: partnerId
+          });
+
+          if (!saved) {
+            console.error('Failed to save initial state');
+          }
+
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Добро пожаловать!\n\nДля регистрации как курьер, введите ваше <b>ФИО</b> (Фамилия Имя Отчество):'
+          );
+
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (isRegistered) {
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            `Вы уже зарегистрированы как сторонний курьер.\n\n<b>ФИО:</b> ${existingCourier.name}${existingCourier.lastname ? ' ' + existingCourier.lastname : ''}\n\nДоступные команды:\n/orders - группа с заказами\n/kabinet - личный кабинет\n/editregis - редактировать данные\n\nВыберите действие:`,
+            {
+              inline_keyboard: [
+                [{ text: 'Редактировать данные', callback_data: 'start_edit_registration' }],
+                [{ text: 'Отмена', callback_data: 'cancel_message' }]
+              ]
+            }
+          );
+
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (!isRegistered) {
+          console.log('Starting registration for user:', userId);
+
+          if (existingCourier && existingCourier.is_own && !existingCourier.is_external) {
+            console.log('User is already registered as company courier, showing warning');
+
+            await sendTelegramMessage(
+              botToken,
+              replyChatId,
+              `Вы уже зарегистрированы как курьер фирмы.\n\n` +
+              `<b>ФИО:</b> ${existingCourier.name}${existingCourier.lastname ? ' ' + existingCourier.lastname : ''}\n\n` +
+              `При регистрации как сторонний курьер вы будете <b>удалены из курьеров фирмы</b>.\n\n` +
+              `Продолжить регистрацию?`,
+              {
+                inline_keyboard: [
+                  [{ text: 'Продолжить', callback_data: 'continue_external_registration' }],
+                  [{ text: 'Отмена', callback_data: 'cancel_external_registration' }]
+                ]
+              }
+            );
+
+            return new Response(JSON.stringify({ ok: true }), {
+              status: 200,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          await deleteUserState(userId);
+
+          const saved = await setUserState(userId, {
+            step: 'awaiting_fullname',
+            partner_id: partnerId
+          });
+
+          if (!saved) {
+            console.error('Failed to save initial state');
+          }
+
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Добро пожаловать!\n\nДля регистрации как курьер, введите ваше <b>ФИО</b> (Фамилия Имя Отчество):'
+          );
+
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const state = await getUserState(userId);
+      console.log('Current user state:', state);
+
+      if (existingCourier && text !== '/start' && !state) {
+        console.log('User already registered as courier:', existingCourier);
+        const courierType = existingCourier.is_external ? 'сторонний курьер' : 'курьер';
+        await sendTelegramMessage(
+          botToken,
+          replyChatId,
+          `Вы уже зарегистрированы как ${courierType}.\n\n<b>Имя:</b> ${existingCourier.name}${existingCourier.lastname ? ' ' + existingCourier.lastname : ''}\n\nОжидайте заказы.${existingCourier.is_external ? '\n\n/orders - группа с заказами\n/kabinet - открыть личный кабинет\n/editregis - редактировать данные' : ''}`
+        );
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (!state) {
+        console.log('No state found, asking user to start');
+
+        if (message.chat.type === 'private') {
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Для р��гистрации как курьер отправьте команду /start'
+          );
+        }
+
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (message.chat.type !== 'private') {
+        console.log('Ignoring non-private chat messages during registration');
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (state.step === 'awaiting_fullname') {
+        if (text.length < 2) {
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Пожалуйста, введите корректное ФИО (минимум 2 символа):'
+          );
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        console.log('Saving fullname:', text);
+        state.fullname = text;
+        state.step = 'awaiting_phone';
+        const saved = await setUserState(userId, state);
+        
+        if (!saved) {
+          console.error('Failed to save fullname state');
+        }
+        
+        await sendTelegramMessage(
+          botToken,
+          replyChatId,
+          `Отлично, ${text}!\n\nТеперь введите ваш <b>номер телефона</b> (например, +380501234567):`
+        );
+      } else if (state.step === 'awaiting_phone') {
+        let phone = text;
+        if (message.contact) {
+          phone = message.contact.phone_number;
+        }
+
+        const phoneDigits = phone.replace(/\D/g, '');
+        if (phoneDigits.length < 10) {
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Некорректный номер телефона. Введите номер в формате +380501234567:'
+          );
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        console.log('Saving phone:', phone);
+        state.phone = phone;
+        state.step = 'awaiting_login';
+        const saved = await setUserState(userId, state);
+
+        if (!saved) {
+          console.error('Failed to save phone state');
+        }
+
+        await sendTelegramMessage(
+          botToken,
+          replyChatId,
+          'Отлично!\n\nТеперь придумайте <b>логин</b> для входа в личный кабинет курьера через браузер:'
+        );
+      } else if (state.step === 'awaiting_login') {
+        if (text.length < 3) {
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Логин должен содержать минимум 3 символа. Попробуйте еще раз:'
+          );
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        console.log('Saving login:', text);
+        state.cabinet_login = text;
+        state.step = 'awaiting_password';
+        const saved = await setUserState(userId, state);
+
+        if (!saved) {
+          console.error('Failed to save login state');
+        }
+
+        await sendTelegramMessage(
+          botToken,
+          replyChatId,
+          'Хорошо!\n\nТеперь придумайте <b>пароль</b> для входа в личный кабинет:'
+        );
+      } else if (state.step === 'awaiting_password') {
+        if (text.length < 4) {
+          await sendTelegramMessage(
+            botToken,
+            replyChatId,
+            'Пароль должен содержать минимум 4 символа. Попробуйте еще раз:'
+          );
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        console.log('Saving password');
+        state.cabinet_password = text;
+        state.step = 'awaiting_vehicle';
+        const saved = await setUserState(userId, state);
+
+        if (!saved) {
+          console.error('Failed to save password state');
+        }
+
+        await sendTelegramMessage(
+          botToken,
+          replyChatId,
+          'Отлично!\n\nВыберите <b>тип транспорта</b>:',
+          {
+            inline_keyboard: [
+              [
+                { text: 'Пеший', callback_data: 'vehicle_пеший' },
+                { text: 'Велосипед', callback_data: 'vehicle_велосипед' },
+              ],
+              [
+                { text: 'Мотоцикл', callback_data: 'vehicle_мотоцикл' },
+                { text: 'Авто', callback_data: 'vehicle_авто' },
+              ],
+            ],
+          }
+        );
+      } else if (state.step === 'awaiting_vehicle') {
+        await sendTelegramMessage(
+          botToken,
+          replyChatId,
+          'Пожалуйста, выберите тип транспорта, нажав на одну из кнопок выше.',
+          {
+            inline_keyboard: [
+              [
+                { text: 'Пеший', callback_data: 'vehicle_пеший' },
+                { text: 'Велосипед', callback_data: 'vehicle_велосипед' },
+              ],
+              [
+                { text: 'Мотоцикл', callback_data: 'vehicle_мотоцикл' },
+                { text: 'Авто', callback_data: 'vehicle_авто' },
+              ],
+            ],
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Error processing update:', error);
+    return new Response(
+      JSON.stringify({ ok: true }),
+      {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }
+    );
+  }
+});

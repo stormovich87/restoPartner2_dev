@@ -1,0 +1,112 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s ease-out;
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
+}
+
+@keyframes scale-up {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes scale-up-desktop {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-scale-up {
+  animation: slide-up 0.2s ease-out;
+}
+
+@media (min-width: 640px) {
+  .animate-scale-up {
+    animation: scale-up-desktop 0.2s ease-out;
+  }
+}
+
+.active\:scale-98:active {
+  transform: scale(0.98);
+}
+
+/* Всегда показывать скроллбар */
+.overflow-x-auto::-webkit-scrollbar {
+  height: 8px;
+  -webkit-appearance: none;
+}
+
+.overflow-x-auto::-webkit-scrollbar-track {
+  background: #F1F5F9;
+  border-radius: 4px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 4px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* Marching ants animation */
+@keyframes marching-ants {
+  0% {
+    background-position: 0 0, 0 100%, 0 0, 100% 0;
+  }
+  100% {
+    background-position: 20px 0, -20px 100%, 0 -20px, 100% 20px;
+  }
+}
+
+.animate-marching-ants {
+  position: relative;
+  background-image:
+    linear-gradient(90deg, #3B82F6 50%, transparent 50%),
+    linear-gradient(90deg, #3B82F6 50%, transparent 50%),
+    linear-gradient(0deg, #3B82F6 50%, transparent 50%),
+    linear-gradient(0deg, #3B82F6 50%, transparent 50%);
+  background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+  background-size: 20px 3px, 20px 3px, 3px 20px, 3px 20px;
+  background-position: 0 0, 0 100%, 0 0, 100% 0;
+  animation: marching-ants 1s linear infinite;
+}
