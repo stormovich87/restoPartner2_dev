@@ -110,7 +110,7 @@ export default function CourierZones({ partnerId }: CourierZonesProps) {
       setInitialLoad(false);
     } catch (error) {
       console.error('Error loading data:', error);
-      setSettings({ partner_id: partner?.id || '' } as PartnerSettings);
+      setSettings({ partner_id: partnerId } as PartnerSettings);
       setLoading(false);
       setInitialLoad(false);
     }
@@ -129,7 +129,7 @@ export default function CourierZones({ partnerId }: CourierZonesProps) {
 
       // Fallback: если координаты не заданы, берем из первого филиала
       if (!settings.default_map_lat || !settings.default_map_lng) {
-        if (partner) {
+        if (partnerId) {
           const { data: branches } = await supabase
             .from('branches')
             .select('id, name, latitude, longitude')
@@ -181,7 +181,7 @@ export default function CourierZones({ partnerId }: CourierZonesProps) {
     } catch (error) {
       console.error('Error initializing map:', error);
     }
-  }, [settings?.google_maps_api_key, settings?.default_map_lat, settings?.default_map_lng, partner]);
+  }, [settings?.google_maps_api_key, settings?.default_map_lat, settings?.default_map_lng, partnerId]);
 
   const renderZones = useCallback(() => {
     if (!mapInstanceRef.current || !mapReady) return;
@@ -330,7 +330,7 @@ export default function CourierZones({ partnerId }: CourierZonesProps) {
   };
 
   const saveZone = async () => {
-    if (!partner || currentPath.length < 3) return;
+    if (!partnerId || currentPath.length < 3) return;
 
     const polygon = currentPath.map(p => ({ lat: p.lat(), lng: p.lng() }));
 
@@ -525,7 +525,7 @@ export default function CourierZones({ partnerId }: CourierZonesProps) {
   };
 
   const saveSettings = async () => {
-    if (!partner) return;
+    if (!partnerId) return;
 
     try {
       const { error } = await supabase
@@ -551,7 +551,7 @@ export default function CourierZones({ partnerId }: CourierZonesProps) {
   };
 
   const exportToKml = () => {
-    if (!partner) return;
+    if (!partnerId) return;
 
     const styles: string[] = [];
     const placemarks: string[] = [];
@@ -631,7 +631,7 @@ export default function CourierZones({ partnerId }: CourierZonesProps) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    const filename = `courier_zones_${partner.url_suffix || partnerId}.kml`;
+    const filename = `courier_zones_${partnerId}.kml`;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
