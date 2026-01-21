@@ -51,6 +51,7 @@ export default function CourierZones() {
       loadData();
     } else {
       setLoading(false);
+      setSettings({ partner_id: '' } as PartnerSettings);
     }
   }, [partner]);
 
@@ -58,6 +59,7 @@ export default function CourierZones() {
     if (!partner) {
       setLoading(false);
       setInitialLoad(false);
+      setSettings({ partner_id: '' } as PartnerSettings);
       return;
     }
 
@@ -74,15 +76,20 @@ export default function CourierZones() {
 
       if (zonesData) {
         const zoneIds = zonesData.map(z => z.id);
-        const { data: polygonsData } = await supabase
-          .from('courier_zone_polygons')
-          .select('*')
-          .in('zone_id', zoneIds)
-          .order('display_order', { ascending: true });
+        let polygonsData: any[] = [];
+
+        if (zoneIds.length > 0) {
+          const { data } = await supabase
+            .from('courier_zone_polygons')
+            .select('*')
+            .in('zone_id', zoneIds)
+            .order('display_order', { ascending: true });
+          polygonsData = data || [];
+        }
 
         const zonesWithPolygons = zonesData.map(zone => ({
           ...zone,
-          polygons: polygonsData?.filter(p => p.zone_id === zone.id) || []
+          polygons: polygonsData.filter(p => p.zone_id === zone.id) || []
         }));
 
         setZones(zonesWithPolygons);
@@ -109,6 +116,7 @@ export default function CourierZones() {
       setInitialLoad(false);
     } catch (error) {
       console.error('Error loading data:', error);
+      setSettings({ partner_id: partner?.id || '' } as PartnerSettings);
       setLoading(false);
       setInitialLoad(false);
     }
