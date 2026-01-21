@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { CourierDeliveryZone, CourierZonePolygon, PartnerSettings } from '../../types';
 import { MapPin, Plus, Edit2, Trash2, Eye, EyeOff, Save, X, Layers, Download } from 'lucide-react';
@@ -16,9 +15,11 @@ const DEFAULT_COLORS = [
   '#F97316'
 ];
 
-export default function CourierZones() {
-  const { partner } = useAuth();
-  console.log('[CourierZones] Component rendered, partner:', partner);
+interface CourierZonesProps {
+  partnerId: string;
+}
+
+export default function CourierZones({ partnerId }: CourierZonesProps) {
   const [zones, setZones] = useState<CourierDeliveryZone[]>([]);
   const [settings, setSettings] = useState<PartnerSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,35 +49,20 @@ export default function CourierZones() {
   const polygonsRef = useRef<Map<string, google.maps.Polygon[]>>(new Map());
 
   useEffect(() => {
-    console.log('[CourierZones] useEffect triggered, partner:', partner?.id || 'null');
-    if (partner) {
-      loadData();
-    } else {
-      console.log('[CourierZones] No partner, setting empty settings');
-      setLoading(false);
-      setSettings({ partner_id: '' } as PartnerSettings);
-    }
-  }, [partner]);
+    loadData();
+  }, [partnerId]);
 
   const loadData = async () => {
-    if (!partner) {
-      setLoading(false);
-      setInitialLoad(false);
-      setSettings({ partner_id: '' } as PartnerSettings);
-      return;
-    }
-
     if (initialLoad) {
       setLoading(true);
     }
 
     try {
-      console.log('[CourierZones] Loading data for partner:', partner.id);
 
       const { data: settingsData, error: settingsError } = await supabase
         .from('partner_settings')
         .select('*')
-        .eq('partner_id', partner.id)
+        .eq('partner_id', partnerId)
         .maybeSingle();
 
       console.log('[CourierZones] Settings loaded:', { settingsData, settingsError, hasApiKey: !!settingsData?.google_maps_api_key });
@@ -90,13 +76,13 @@ export default function CourierZones() {
         setCourierNoZoneMessage(settingsData.courier_no_zone_message || 'Адрес доставки вне зоны обслуживания курьеров');
       } else {
         console.warn('[CourierZones] No settings found for partner, creating placeholder');
-        setSettings({ partner_id: partner.id } as PartnerSettings);
+        setSettings({ partner_id: partnerId } as PartnerSettings);
       }
 
       const { data: zonesData } = await supabase
         .from('courier_delivery_zones')
         .select('*')
-        .eq('partner_id', partner.id)
+        .eq('partner_id', partnerId)
         .order('created_at', { ascending: true });
 
       if (zonesData) {
@@ -147,7 +133,7 @@ export default function CourierZones() {
           const { data: branches } = await supabase
             .from('branches')
             .select('id, name, latitude, longitude')
-            .eq('partner_id', partner.id)
+            .eq('partner_id', partnerId)
             .not('latitude', 'is', null)
             .not('longitude', 'is', null)
             .order('created_at', { ascending: true })
@@ -352,7 +338,7 @@ export default function CourierZones() {
       const { data: zoneData, error: zoneError } = await supabase
         .from('courier_delivery_zones')
         .insert({
-          partner_id: partner.id,
+          partner_id: partnerId,
           name: formData.name,
           color: formData.color,
           price_uah: formData.price_uah,
@@ -545,7 +531,7 @@ export default function CourierZones() {
       const { error } = await supabase
         .from('partner_settings')
         .update({ courier_no_zone_message: courierNoZoneMessage })
-        .eq('partner_id', partner.id);
+        .eq('partner_id', partnerId);
 
       if (error) throw error;
 
@@ -645,7 +631,7 @@ export default function CourierZones() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    const filename = `courier_zones_${partner.url_suffix || partner.id}.kml`;
+    const filename = `courier_zones_${partner.url_suffix || partnerId}.kml`;
     a.download = filename;
     document.body.appendChild(a);
     a.click();

@@ -1142,7 +1142,7 @@ export default function PartnerDashboard() {
             )}
 
             {settingsTab === 'courier-zones' && hasPermission('courier_zones') && partner && (
-              <CourierZones />
+              <CourierZones partnerId={partner.id} />
             )}
 
             {settingsTab === 'payment-methods' && hasPermission('payment_methods') && partner && (
