@@ -261,6 +261,7 @@ async function resolvePartnerId(botToken: string): Promise<string | null> {
       .from('partner_settings')
       .select('partner_id')
       .eq('courier_bot_token', botToken)
+      .eq('courier_bot_enabled', true)
       .maybeSingle();
 
     if (!partnerError && partner?.partner_id) {
@@ -271,7 +272,7 @@ async function resolvePartnerId(botToken: string): Promise<string | null> {
     if (partnerError) {
       console.error('⚠️ Error querying partner_settings:', partnerError);
     } else {
-      console.log('⚠️ No partner found in partner_settings with this courier_bot_token');
+      console.log('⚠️ No partner found in partner_settings with this courier_bot_token (or bot disabled)');
     }
   } catch (err) {
     console.error('❌ Exception querying partner_settings:', err);
