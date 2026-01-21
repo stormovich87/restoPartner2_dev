@@ -692,7 +692,7 @@ async function handlePasswordCommand(update: TelegramUpdate, botToken: string, p
   );
 }
 
-async function handleKabinetCommand(update: TelegramUpdate, botToken: string, partnerId: string): Promise<void> {
+async function handleKabinetCommand(update: TelegramUpdate, botToken: string, partnerId: string, cabinetBaseUrl: string): Promise<void> {
   const chatId = update.message!.chat.id;
   const chatType = update.message!.chat.type;
   const telegramUserId = update.message!.from.id;
@@ -731,9 +731,7 @@ async function handleKabinetCommand(update: TelegramUpdate, botToken: string, pa
     return;
   }
 
-  const settings = await getPartnerSettings(partnerId);
-  const baseUrl = settings?.employee_cabinet_url || settings?.app_url || 'https://restopresto.org/employee';
-  const cabinetUrl = `${baseUrl}/${employee.cabinet_slug}`;
+  const cabinetUrl = `${cabinetBaseUrl}/${employee.cabinet_slug}`;
 
   const keyboard = {
     inline_keyboard: [[
@@ -1742,6 +1740,10 @@ Deno.serve(async (req: Request) => {
     console.log('Received update:', JSON.stringify(update));
 
     const url = new URL(req.url);
+    const origin = url.origin;
+    const cabinetBaseUrl = `${origin}/employee`;
+    console.log(`[EMPLOYEE BOT] Using cabinet base URL: ${cabinetBaseUrl}`);
+
     const partnerId = url.searchParams.get('partner_id');
 
     if (!partnerId) {
@@ -1782,7 +1784,7 @@ Deno.serve(async (req: Request) => {
       } else if (text === '/password' || text?.startsWith('/password@')) {
         await handlePasswordCommand(update, botToken, partnerId);
       } else if (text === '/kabinet' || text?.startsWith('/kabinet@')) {
-        await handleKabinetCommand(update, botToken, partnerId);
+        await handleKabinetCommand(update, botToken, partnerId, cabinetBaseUrl);
       } else {
         const state = await getUserState(telegramUserId);
         const chatType = update.message.chat.type;

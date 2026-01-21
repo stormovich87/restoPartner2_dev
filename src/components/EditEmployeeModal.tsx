@@ -428,11 +428,11 @@ export default function EditEmployeeModal({ partnerId, employee, onClose, onSucc
                   <label className="text-xs text-gray-500 mb-1 block">Ссылка на кабинет</label>
                   <div className="flex items-center gap-2">
                     <div className="flex-1 px-3 py-2 bg-white border border-blue-200 rounded-lg font-mono text-sm text-gray-900 truncate">
-                      https://restopresto.org/employee/{cabinetSlug}
+                      {window.location.origin}/employee/{cabinetSlug}
                     </div>
                     <button
                       type="button"
-                      onClick={() => window.open(`https://restopresto.org/employee/${cabinetSlug}`, '_blank')}
+                      onClick={() => window.open(`${window.location.origin}/employee/${cabinetSlug}`, '_blank')}
                       className="p-2 hover:bg-blue-100 rounded-lg transition-colors"
                       title="Открыть кабинет"
                     >
@@ -440,7 +440,7 @@ export default function EditEmployeeModal({ partnerId, employee, onClose, onSucc
                     </button>
                     <button
                       type="button"
-                      onClick={() => copyToClipboard(`https://restopresto.org/employee/${cabinetSlug}`, 'url')}
+                      onClick={() => copyToClipboard(`${window.location.origin}/employee/${cabinetSlug}`, 'url')}
                       className="p-2 hover:bg-blue-100 rounded-lg transition-colors"
                       title="Копировать"
                     >

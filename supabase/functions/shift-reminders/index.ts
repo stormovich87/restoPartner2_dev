@@ -142,7 +142,8 @@ async function sendTelegramMessage(
 async function notifyResponsibleEmployees(
   partner: PartnerSettings,
   shift: ShiftToRemind,
-  branchName: string
+  branchName: string,
+  cabinetBaseUrl: string
 ): Promise<{ messageIds: number[] }> {
   const messageIds: number[] = [];
 
@@ -179,8 +180,6 @@ async function notifyResponsibleEmployees(
   const employeeName = shift.employee
     ? `${shift.employee.first_name}${shift.employee.last_name ? " " + shift.employee.last_name : ""}`
     : "\u0421\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a";
-
-  const cabinetBaseUrl = partner.employee_cabinet_url || partner.app_url || "https://restopresto.org/employee";
 
   for (const responsible of responsibleEmployees) {
     let message = `<b>\u041d\u0435\u0432\u044b\u0445\u043e\u0434 \u0441\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a\u0430 \u043d\u0430 \u0441\u043c\u0435\u043d\u0443</b>\n\n` +
@@ -266,7 +265,8 @@ interface ReplacementCandidateInfo {
 async function sendReplacementNotifications(
   partner: PartnerSettings,
   shift: ShiftToRemind,
-  branchName: string
+  branchName: string,
+  cabinetBaseUrl: string
 ): Promise<{ candidates: ReplacementCandidateInfo[] }> {
   if (!partner.replacement_search_enabled) {
     console.log(`[REPLACEMENT] Partner ${partner.partner_id}: replacement_search_enabled is false, skipping`);
@@ -371,8 +371,6 @@ async function sendReplacementNotifications(
     ? `${shift.employee.first_name}${shift.employee.last_name ? " " + shift.employee.last_name : ""}`
     : "\u0421\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a";
 
-  const cabinetBaseUrl = partner.employee_cabinet_url || partner.app_url || "https://restopresto.org/employee";
-
   for (const candidate of filteredCandidates) {
     const message = `<b>\u0421\u0440\u043e\u0447\u043d\u0430\u044f \u0441\u043c\u0435\u043d\u0430!</b>\n\n` +
       `${employeeName} \u043d\u0435 \u0432\u044b\u0448\u0435\u043b \u043d\u0430 \u0441\u043c\u0435\u043d\u0443.\n\n` +
@@ -473,6 +471,10 @@ async function sendReplacementNotifications(
 Deno.serve(async (req: Request) => {
   console.log("[SHIFT REMINDERS] Function invoked");
 
+  const origin = new URL(req.url).origin;
+  const cabinetBaseUrl = `${origin}/employee`;
+  console.log(`[SHIFT REMINDERS] Using cabinet base URL: ${cabinetBaseUrl}`);
+
   let processed = 0;
   let errors = 0;
 
@@ -564,8 +566,7 @@ Deno.serve(async (req: Request) => {
 
           let cabinetUrl: string | null = null;
           if (shift.employee?.cabinet_slug) {
-            const baseUrl = partner.employee_cabinet_url || partner.app_url || "https://restopresto.org/employee";
-            cabinetUrl = `${baseUrl}/${shift.employee.cabinet_slug}`;
+            cabinetUrl = `${cabinetBaseUrl}/${shift.employee.cabinet_slug}`;
           }
 
           const noShowThreshold = partner.no_show_threshold_minutes || 30;
@@ -602,7 +603,7 @@ Deno.serve(async (req: Request) => {
                 if (!shift.no_show_notified_at) {
                   console.log(`[NO-SHOW] Shift ${shift.id}: sending notifications to responsible employees`);
 
-                  const { messageIds } = await notifyResponsibleEmployees(partner, shift, branchName);
+                  const { messageIds } = await notifyResponsibleEmployees(partner, shift, branchName, cabinetBaseUrl);
 
                   await supabase
                     .from("schedule_shifts")
@@ -616,7 +617,7 @@ Deno.serve(async (req: Request) => {
 
                   if (partner.replacement_search_enabled && (!shift.replacement_status || shift.replacement_status === "none")) {
                     console.log(`[REPLACEMENT] Shift ${shift.id}: initiating replacement search`);
-                    const { candidates } = await sendReplacementNotifications(partner, shift, branchName);
+                    const { candidates } = await sendReplacementNotifications(partner, shift, branchName, cabinetBaseUrl);
 
                     if (candidates.length > 0) {
                       const candidateNames = candidates
