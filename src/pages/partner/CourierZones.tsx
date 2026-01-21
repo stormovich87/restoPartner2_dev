@@ -43,7 +43,14 @@ export default function CourierZones({ partnerId }: CourierZonesProps) {
     min_order_amount: null as number | null
   });
 
+  const [mapContainerReady, setMapContainerReady] = useState(false);
   const mapRef = useRef<HTMLDivElement>(null);
+  const mapContainerRef = useCallback((node: HTMLDivElement | null) => {
+    if (node !== null) {
+      (mapRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+      setMapContainerReady(true);
+    }
+  }, []);
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
   const drawingPolygonRef = useRef<google.maps.Polygon | null>(null);
   const polygonsRef = useRef<Map<string, google.maps.Polygon[]>>(new Map());
@@ -252,14 +259,15 @@ export default function CourierZones({ partnerId }: CourierZonesProps) {
   useEffect(() => {
     console.log('[CourierZones] Map init check:', {
       hasApiKey: !!settings?.google_maps_api_key,
+      mapContainerReady,
       hasMapRef: !!mapRef.current,
       hasMapInstance: !!mapInstanceRef.current
     });
-    if (settings?.google_maps_api_key && mapRef.current && !mapInstanceRef.current) {
+    if (settings?.google_maps_api_key && mapContainerReady && mapRef.current && !mapInstanceRef.current) {
       console.log('[CourierZones] Initializing map...');
       initializeMap();
     }
-  }, [settings?.google_maps_api_key, initializeMap]);
+  }, [settings?.google_maps_api_key, mapContainerReady, initializeMap]);
 
   useEffect(() => {
     renderZones();
@@ -773,7 +781,7 @@ export default function CourierZones({ partnerId }: CourierZonesProps) {
               </div>
             </div>
 
-            <div ref={mapRef} className="h-[600px]" />
+            <div ref={mapContainerRef} className="h-[600px]" />
           </div>
 
           {showForm && (
