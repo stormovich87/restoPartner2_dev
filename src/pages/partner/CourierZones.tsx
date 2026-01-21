@@ -114,14 +114,37 @@ export default function CourierZones() {
     try {
       await loadGoogleMapsScript(settings.google_maps_api_key);
 
-      const center = {
+      let center = {
         lat: settings.default_map_lat || 50.4501,
         lng: settings.default_map_lng || 30.5234
       };
 
+      // Fallback: если координаты не заданы, берем из первого филиала
+      if (!settings.default_map_lat || !settings.default_map_lng) {
+        if (partner) {
+          const { data: branches } = await supabase
+            .from('branches')
+            .select('id, name, latitude, longitude')
+            .eq('partner_id', partner.id)
+            .not('latitude', 'is', null)
+            .not('longitude', 'is', null)
+            .order('created_at', { ascending: true })
+            .limit(1);
+
+          if (branches && branches.length > 0 && branches[0].latitude && branches[0].longitude) {
+            center = {
+              lat: branches[0].latitude,
+              lng: branches[0].longitude
+            };
+
+            console.log(`[CourierZones] Using branch "${branches[0].name}" as map center:`, center);
+          }
+        }
+      }
+
       const map = new google.maps.Map(mapRef.current, {
         center,
-        zoom: 12,
+        zoom: 13,
         mapTypeControl: true,
         streetViewControl: false,
         fullscreenControl: true
@@ -129,10 +152,28 @@ export default function CourierZones() {
 
       mapInstanceRef.current = map;
       setMapReady(true);
+
+      // Добавим маркер для центра карты (если это филиал)
+      if (!settings.default_map_lat || !settings.default_map_lng) {
+        new google.maps.Marker({
+          position: center,
+          map: map,
+          title: 'Филиал',
+          icon: {
+            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="%233B82F6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/>
+                <circle cx="12" cy="10" r="3"/>
+              </svg>
+            `),
+            scaledSize: new google.maps.Size(32, 32)
+          }
+        });
+      }
     } catch (error) {
       console.error('Error initializing map:', error);
     }
-  }, [settings?.google_maps_api_key, settings?.default_map_lat, settings?.default_map_lng]);
+  }, [settings?.google_maps_api_key, settings?.default_map_lat, settings?.default_map_lng, partner]);
 
   const renderZones = useCallback(() => {
     if (!mapInstanceRef.current || !mapReady) return;

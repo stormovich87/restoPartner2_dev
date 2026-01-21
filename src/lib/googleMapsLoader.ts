@@ -49,7 +49,7 @@ export async function loadGoogleMapsScript(apiKey: string): Promise<void> {
     };
 
     const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&loading=async&callback=${CALLBACK_NAME}`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=drawing,geometry,places&loading=async&callback=${CALLBACK_NAME}`;
     script.async = true;
     script.defer = true;
 
