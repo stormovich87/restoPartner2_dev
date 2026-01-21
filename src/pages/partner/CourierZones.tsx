@@ -88,15 +88,21 @@ export default function CourierZones() {
         setZones(zonesWithPolygons);
       }
 
-      const { data: settingsData } = await supabase
+      const { data: settingsData, error: settingsError } = await supabase
         .from('partner_settings')
         .select('*')
         .eq('partner_id', partner.id)
         .maybeSingle();
 
+      if (settingsError) {
+        console.error('Error loading partner settings:', settingsError);
+      }
+
       if (settingsData) {
         setSettings(settingsData);
         setCourierNoZoneMessage(settingsData.courier_no_zone_message || 'Адрес доставки вне зоны обслуживания курьеров');
+      } else {
+        setSettings({ partner_id: partner.id } as PartnerSettings);
       }
 
       setLoading(false);
@@ -633,7 +639,7 @@ export default function CourierZones() {
     alert(zones.length > 0 ? 'Файл KML скачан' : 'Файл KML скачан (зоны не созданы)');
   };
 
-  if (loading && initialLoad) {
+  if (loading || !settings) {
     return (
       <div className="p-6">
         <div className="flex items-center justify-center h-64">
@@ -643,7 +649,7 @@ export default function CourierZones() {
     );
   }
 
-  if (!settings?.google_maps_api_key) {
+  if (!settings.google_maps_api_key) {
     return (
       <div className="p-6">
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
