@@ -18,6 +18,7 @@ const DEFAULT_COLORS = [
 
 export default function CourierZones() {
   const { partner } = useAuth();
+  console.log('[CourierZones] Component rendered, partner:', partner);
   const [zones, setZones] = useState<CourierDeliveryZone[]>([]);
   const [settings, setSettings] = useState<PartnerSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -47,9 +48,11 @@ export default function CourierZones() {
   const polygonsRef = useRef<Map<string, google.maps.Polygon[]>>(new Map());
 
   useEffect(() => {
+    console.log('[CourierZones] useEffect triggered, partner:', partner?.id || 'null');
     if (partner) {
       loadData();
     } else {
+      console.log('[CourierZones] No partner, setting empty settings');
       setLoading(false);
       setSettings({ partner_id: '' } as PartnerSettings);
     }
