@@ -68,6 +68,28 @@ export default function CourierZones() {
     }
 
     try {
+      console.log('[CourierZones] Loading data for partner:', partner.id);
+
+      const { data: settingsData, error: settingsError } = await supabase
+        .from('partner_settings')
+        .select('*')
+        .eq('partner_id', partner.id)
+        .maybeSingle();
+
+      console.log('[CourierZones] Settings loaded:', { settingsData, settingsError, hasApiKey: !!settingsData?.google_maps_api_key });
+
+      if (settingsError) {
+        console.error('Error loading partner settings:', settingsError);
+      }
+
+      if (settingsData) {
+        setSettings(settingsData);
+        setCourierNoZoneMessage(settingsData.courier_no_zone_message || 'Адрес доставки вне зоны обслуживания курьеров');
+      } else {
+        console.warn('[CourierZones] No settings found for partner, creating placeholder');
+        setSettings({ partner_id: partner.id } as PartnerSettings);
+      }
+
       const { data: zonesData } = await supabase
         .from('courier_delivery_zones')
         .select('*')
@@ -93,23 +115,6 @@ export default function CourierZones() {
         }));
 
         setZones(zonesWithPolygons);
-      }
-
-      const { data: settingsData, error: settingsError } = await supabase
-        .from('partner_settings')
-        .select('*')
-        .eq('partner_id', partner.id)
-        .maybeSingle();
-
-      if (settingsError) {
-        console.error('Error loading partner settings:', settingsError);
-      }
-
-      if (settingsData) {
-        setSettings(settingsData);
-        setCourierNoZoneMessage(settingsData.courier_no_zone_message || 'Адрес доставки вне зоны обслуживания курьеров');
-      } else {
-        setSettings({ partner_id: partner.id } as PartnerSettings);
       }
 
       setLoading(false);
