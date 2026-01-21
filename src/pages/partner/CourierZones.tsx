@@ -250,7 +250,13 @@ export default function CourierZones({ partnerId }: CourierZonesProps) {
   }, [zones, hiddenZones, mapReady, isDrawing, addingPolygonToZone, editingPolygonId, currentPath, formData.color]);
 
   useEffect(() => {
+    console.log('[CourierZones] Map init check:', {
+      hasApiKey: !!settings?.google_maps_api_key,
+      hasMapRef: !!mapRef.current,
+      hasMapInstance: !!mapInstanceRef.current
+    });
     if (settings?.google_maps_api_key && mapRef.current && !mapInstanceRef.current) {
+      console.log('[CourierZones] Initializing map...');
       initializeMap();
     }
   }, [settings?.google_maps_api_key, initializeMap]);
