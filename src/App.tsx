@@ -7,6 +7,7 @@ import PartnerForm from './pages/PartnerForm';
 import PartnerLogin from './pages/PartnerLogin';
 import PartnerDashboard from './pages/partner/PartnerDashboard';
 import Accesses from './pages/Accesses';
+import ECourier from './pages/ECourier';
 import CourierCabinet from './pages/CourierCabinet';
 import EmployeeCabinet from './pages/EmployeeCabinet';
 import { AlertCircle } from 'lucide-react';
@@ -75,6 +76,7 @@ function App() {
             {/* Super Admin Routes */}
             <Route path="/super-admin/partners" element={<PartnersList />} />
             <Route path="/super-admin/accesses" element={<Accesses />} />
+            <Route path="/super-admin/e-courier" element={<ECourier />} />
             <Route path="/admin/partners/create" element={<PartnerForm />} />
             <Route path="/admin/partners/edit/:id" element={<PartnerForm />} />
 

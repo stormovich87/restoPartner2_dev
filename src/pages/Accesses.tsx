@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Menu, X, Users, Shield, LogOut, Plus, Edit, Trash2, Save, XCircle } from 'lucide-react';
+import { Menu, X, Users, Shield, LogOut, Plus, Edit, Trash2, Save, XCircle, Truck } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Partner } from '../types';
@@ -333,6 +333,16 @@ export default function Accesses() {
           >
             <Shield className="w-5 h-5" />
             <span>Доступы</span>
+          </button>
+          <button
+            onClick={() => {
+              navigate('/super-admin/e-courier');
+              setSidebarOpen(false);
+            }}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-gray-700 hover:bg-blue-50"
+          >
+            <Truck className="w-5 h-5" />
+            <span>Е-курьер</span>
           </button>
         </nav>
 

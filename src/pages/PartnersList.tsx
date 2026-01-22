@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Edit, Trash2, Pause, Play, ExternalLink, LogOut, Copy, Check, Menu, X, Users, Shield, Code } from 'lucide-react';
+import { Plus, Edit, Trash2, Pause, Play, ExternalLink, LogOut, Copy, Check, Menu, X, Users, Shield, Code, Truck } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Partner } from '../types';
 import { useAuth } from '../contexts/AuthContext';
@@ -157,16 +157,28 @@ export default function PartnersList() {
             <span>Партнёры</span>
           </button>
           {isSuperAdmin && (
-            <button
-              onClick={() => {
-                navigate('/super-admin/accesses');
-                setSidebarOpen(false);
-              }}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-gray-700 hover:bg-blue-50"
-            >
-              <Shield className="w-5 h-5" />
-              <span>Доступы</span>
-            </button>
+            <>
+              <button
+                onClick={() => {
+                  navigate('/super-admin/accesses');
+                  setSidebarOpen(false);
+                }}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-gray-700 hover:bg-blue-50"
+              >
+                <Shield className="w-5 h-5" />
+                <span>Доступы</span>
+              </button>
+              <button
+                onClick={() => {
+                  navigate('/super-admin/e-courier');
+                  setSidebarOpen(false);
+                }}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-gray-700 hover:bg-blue-50"
+              >
+                <Truck className="w-5 h-5" />
+                <span>Е-курьер</span>
+              </button>
+            </>
           )}
         </nav>
 
