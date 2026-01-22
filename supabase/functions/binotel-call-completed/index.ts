@@ -68,33 +68,44 @@ Deno.serve(async (req: Request) => {
 
     console.log('Received Binotel call-completed webhook:', rawPayload);
 
-    let callDetails: any = rawPayload.callDetails || rawPayload;
-    if (typeof callDetails === 'string') {
-      try {
-        callDetails = JSON.parse(callDetails);
-      } catch {
-        console.error('Failed to parse callDetails as JSON');
+    const getField = (fieldName: string): any => {
+      const bracketKey = `callDetails[${fieldName}]`;
+      if (rawPayload[bracketKey] !== undefined) {
+        return rawPayload[bracketKey];
       }
-    }
 
-    const generalCallID = callDetails.generalCallID || callDetails.generalcallid || null;
-    const companyID = callDetails.companyID || callDetails.companyid || rawPayload.companyID || '';
-    const callType = parseInt(callDetails.callType || callDetails.calltype || '0', 10);
-    const externalNumber = callDetails.externalNumber || callDetails.externalnumber || '';
-    const internalNumber = callDetails.internalNumber || callDetails.internalnumber || '';
-    const disposition = callDetails.disposition || 'UNKNOWN';
-    const waitsec = parseInt(callDetails.waitsec || '0', 10);
-    const billsec = parseInt(callDetails.billsec || '0', 10);
-    const startTime = callDetails.startTime || callDetails.starttime || null;
+      let callDetails: any = rawPayload.callDetails || rawPayload;
+      if (typeof callDetails === 'string') {
+        try {
+          callDetails = JSON.parse(callDetails);
+        } catch {
+          return rawPayload[fieldName] || rawPayload[fieldName.toLowerCase()] || null;
+        }
+      }
 
-    const employeeData = callDetails.employeeData || callDetails.employeedata || {};
-    const customerData = callDetails.customerData || callDetails.customerdata || {};
-    const pbxNumberData = callDetails.pbxNumberData || callDetails.pbxnumberdata || {};
+      return callDetails[fieldName] || callDetails[fieldName.toLowerCase()] || rawPayload[fieldName] || null;
+    };
+
+    const generalCallID = getField('generalCallID') || getField('generalcallid') || null;
+    const companyID = getField('companyID') || getField('companyid') || '';
+    const callType = parseInt(getField('callType') || getField('calltype') || '0', 10);
+    const externalNumber = getField('externalNumber') || getField('externalnumber') || '';
+    const internalNumber = getField('internalNumber') || getField('internalnumber') || '';
+    const disposition = getField('disposition') || 'UNKNOWN';
+    const waitsec = parseInt(getField('waitsec') || '0', 10);
+    const billsec = parseInt(getField('billsec') || '0', 10);
+    const startTime = getField('startTime') || getField('starttime') || null;
+
+    console.log('Resolved companyID:', companyID, 'generalCallID:', generalCallID);
+
+    const employeeData = getField('employeeData') || getField('employeedata') || {};
+    const customerData = getField('customerData') || getField('customerdata') || {};
+    const pbxNumberData = getField('pbxNumberData') || getField('pbxnumberdata') || {};
 
     const employeeEmail = employeeData.email || null;
     const employeeName = employeeData.name || null;
     const customerBinotelId = customerData.id ? String(customerData.id) : null;
-    const pbxNumber = pbxNumberData.number || callDetails.pbxNumber || '';
+    const pbxNumber = pbxNumberData.number || getField('pbxNumber') || '';
 
     let partnerId: string | null = null;
     if (companyID) {
